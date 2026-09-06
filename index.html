@@ -323,6 +323,19 @@ h4.sec:first-child{margin-top:0}
   #playBtn{font-size:24px;padding:11px 44px}
   #credit{font-size:13px}#scratchLogo{height:22px}
 }
+
+#diag{position:fixed;left:10px;bottom:10px;z-index:97;max-width:min(520px,calc(100vw - 20px));
+  background:rgba(58,14,14,.96);border:4px solid #ff5a4a;border-radius:13px;padding:11px 40px 11px 13px;
+  color:#ffe3dd;font-size:12.5px;line-height:1.5;box-shadow:0 5px 0 rgba(0,0,0,.35)}
+#diag[hidden]{display:none}
+#diag b{color:#fff;font-size:14px;display:block;margin-bottom:3px}
+#diag code{display:block;background:rgba(0,0,0,.4);border-radius:6px;padding:4px 6px;margin:5px 0;
+  font-size:11px;word-break:break-all;color:#ffd9a8}
+#diag a{color:#8ff04a}
+#diagX{position:absolute;top:7px;right:8px;width:24px;height:24px;border-radius:7px;border:2px solid #ff5a4a;
+  background:transparent;color:#ffd9d3;font-size:15px;font-weight:800;cursor:pointer;padding:0;
+  font-family:var(--f);line-height:1}
+#diagX:hover{background:#ff5a4a;color:#fff}
 </style>
 </head>
 <body>
@@ -400,6 +413,11 @@ h4.sec:first-child{margin-top:0}
     <button class="btn alt" id="helpBtn">How to play</button>
   </div>
 </div>
+
+<div id="diag" hidden>
+    <div id="diagBody"></div>
+    <button id="diagX" title="Dismiss">&times;</button>
+  </div>
 
 <div id="modal">
   <div id="panel">
@@ -1770,6 +1788,37 @@ function checkAudio(done){
   };
   next();
 }
+const absURL=f=>{ try{ return new URL(sfxSrc(f),location.href).href; }catch(e){ return sfxSrc(f); } };
+/* Runs once on startup. If sound cannot be reached it says so plainly, with the exact
+   address it tried, instead of the game just being silent for no visible reason. */
+let diagDone=false;
+function audioDiagnose(){
+  if(diagDone) return;
+  diagDone=true;
+  checkAudio(res=>{
+    const bad=res.filter(r=>!r.ok);
+    if(!bad.length) return;
+    const isFile=location.protocol==='file:';
+    const all=bad.length===res.length;
+    let msg='<b>No sound: '+bad.length+' of '+res.length+' audio files could not be loaded.</b>';
+    msg+='The page looked here:<code>'+absURL(bad[0].f)+'</code>';
+    if(all&&isFile){
+      msg+='You have opened the page straight from your computer, and some browsers refuse to '
+        +'read files next to it that way. Try a different browser, put it online, or use '
+        +'<b>Settings &rarr; Load audio files</b> to pick the folder by hand.';
+    } else if(all){
+      msg+='Nothing loaded at all, so the <b>audio</b> folder is probably not next to index.html '
+        +'where it is published, or it was left out when you uploaded. Paste that address into a '
+        +'new tab — if it does not play, the file is not there.';
+    } else {
+      msg+='Some loaded and some did not, so these are probably named differently: <b>'
+        +bad.slice(0,4).map(r=>r.f).join(', ')+(bad.length>4?' and more':'')+'</b>';
+    }
+    $('#diagBody').innerHTML=msg;
+    $('#diag').hidden=false;
+  });
+}
+$('#diagX').onclick=()=>{ $('#diag').hidden=true; };
 let lastCollectSfx=0;
 function collectSfx(){
   const n=performance.now();
@@ -2423,8 +2472,10 @@ function renderSettings(root){
   vol('Music volume','','musVol',()=>{ music.volume=S.set.musVol; });
   const ldRow=el('div','row'), ldInfo=el('div','info');
   ldInfo.innerHTML='<h3>Audio files</h3><p>Sounds and music load from the <b>audio</b> folder '
-    +'sitting next to this page. If your browser will not read that folder, pick the files by '
-    +'hand here and they will play from memory for this session.</p>';
+    +'sitting next to this page. Right now that means:</p>'
+    +'<p style="font-size:11px;opacity:.8;word-break:break-all"><code>'+absURL('Collect.wav')+'</code></p>'
+    +'<p>Paste that into a new tab to test it. If it does not play, the file is not where the page '
+    +'is looking. You can also pick the files by hand here and they will play for this session.</p>';
   const ld=el('button','btn alt'); ld.textContent='Load audio files';
   const inp=el('input'); inp.type='file'; inp.multiple=true; inp.accept='audio/*'; inp.style.display='none';
   inp.onchange=()=>{
@@ -2467,7 +2518,11 @@ function renderSettings(root){
      toggleBtn(S.set.tips,()=>{S.set.tips=!S.set.tips;save();refresh();},['On','Off']));
   /* shared counter setup */
   const gr=el('div','row'), gi=el('div','info');
+  const localFile=location.protocol==='file:';
   const state = gMode==='shared' ? 'Connected through Claude. The numbers are shared.'
+    : localFile ? '<b style="color:#ffcf3d">You have opened this page straight from your computer, '
+        +'and browsers block pages opened that way from talking to the internet. The shared counter '
+        +'can only work once the game is published online.</b>'
     : gMode==='blob' ? (gWarn?'<b style="color:#ff9d8a">'+gWarn+'</b>':'Connected. The numbers are shared with everyone playing.')
     : 'Not connected, so the globe numbers are only yours.';
   gi.innerHTML='<h3>🌐 Shared counter</h3><p>'+state+'</p>'
@@ -2665,6 +2720,7 @@ function startGame(){
   lastDropReset();
   /* the play button is a real click, so the browser lets the music start here */
   tryStartMusic();
+  setTimeout(audioDiagnose,600);
   updateHUD();
 }
 function lastDropReset(){ cycleT=0; last=performance.now(); newCycle(); }
