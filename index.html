@@ -981,7 +981,24 @@ const Store={
         only, and the globe icons say so.
    ============================================================ */
 const GKEY='difficulty-collector-global-v1';
-const GLOBAL_ENDPOINT='';          /* <- your own endpoint goes here */
+
+/* ============================================================
+   PASTE YOUR SHARED COUNTER CODE BETWEEN THE QUOTES BELOW.
+   Get one free at jsonblob.com - no account needed:
+     1. open jsonblob.com
+     2. delete what is in the box, type  {}  and press Save
+     3. copy the long number at the end of the address bar
+   Leave it empty and the counts are just for this browser.
+   ============================================================ */
+const GLOBAL_ID='01a07854-1d16-7c23-9604-06adb397ced7';
+
+const blobURL=()=>{
+  let id=String(S.globalId||GLOBAL_ID||'').trim();
+  /* accept a whole pasted address as well as a bare code */
+  if(id.indexOf('/')>=0) id=id.split(/[?#]/)[0].replace(/\/+$/,'').split('/').pop();
+  id=id.replace(/[^0-9a-zA-Z-]/g,'');   /* codes contain hyphens, so keep them */
+  return id?'https://jsonblob.com/api/jsonBlob/'+id:'';
+};
 
 let G={total:0,diff:{},mod:{},combo:{},rarest:null};
 let gPend={total:0,diff:{},mod:{},combo:{},rarest:null};
@@ -1012,9 +1029,14 @@ const GNet={
       try{ const r=await window.storage.get(GKEY,true); gMode='shared';
            if(r&&r.value) return JSON.parse(r.value); return {}; }catch(e){ gMode='shared'; return {}; }
     }
-    if(GLOBAL_ENDPOINT){
-      try{ const r=await fetch(GLOBAL_ENDPOINT,{cache:'no-store'});
-           if(r.ok){ gMode='endpoint'; return await r.json(); } }catch(e){}
+    const u=blobURL();
+    if(u){
+      try{
+        const r=await fetch(u,{cache:'no-store',headers:{'Accept':'application/json'}});
+        if(r.ok){ gMode='blob'; return await r.json(); }
+        gMode='blob'; gWarn='That code did not match a counter (error '+r.status+').';
+        return {};
+      }catch(e){ gMode='blob'; gWarn='Could not reach jsonblob.com.'; return {}; }
     }
     gMode='local';
     try{ const l=localStorage.getItem(GKEY); if(l) return JSON.parse(l); }catch(e){}
@@ -1022,14 +1044,30 @@ const GNet={
   },
   async write(o){
     const j=JSON.stringify(o);
-    if(gMode==='shared'){ try{ await window.storage.set(GKEY,j,true); return; }catch(e){} }
-    if(gMode==='endpoint'){
-      try{ await fetch(GLOBAL_ENDPOINT,{method:'PUT',headers:{'Content-Type':'application/json'},body:j});
-           return; }catch(e){}
+    if(gMode==='shared'){ try{ await window.storage.set(GKEY,j,true); return true; }catch(e){} }
+    if(gMode==='blob'){
+      try{
+        const r=await fetch(blobURL(),{method:'PUT',
+          headers:{'Content-Type':'application/json','Accept':'application/json'},body:j});
+        if(r.ok){ gWarn=''; return true; }
+        gWarn='Saving to the shared counter failed (error '+r.status+').';
+      }catch(e){ gWarn='Could not reach jsonblob.com.'; }
     }
     try{ localStorage.setItem(GKEY,j); }catch(e){}
+    return false;
+  },
+  /* makes a brand new counter and hands back its code */
+  async create(){
+    const r=await fetch('https://jsonblob.com/api/jsonBlob',{method:'POST',
+      headers:{'Content-Type':'application/json','Accept':'application/json'},
+      body:JSON.stringify({total:0,diff:{},mod:{},combo:{},rarest:null})});
+    if(!r.ok) throw new Error('jsonblob said '+r.status);
+    const loc=r.headers.get('Location')||r.headers.get('location');
+    if(!loc) throw new Error('no-location');
+    return loc.split('/').pop();
   }
 };
+let gWarn='';
 function gRecord(b){
   gPend.total++;
   gAdd(gPend.diff,b.d.n,1);
@@ -1061,6 +1099,7 @@ const gComboCount=(d,mods)=>{
   return (G.combo[k]||0)+(gPend.combo[k]||0);
 };
 const gLabel=()=>gMode==='local'?'this browser only':'collected by everyone';
+const gShared=()=>gMode!=='local';
 function globalComboLine(d,mods){
   if(!mods.length){
     const n=gDiffCount(d);
@@ -1089,7 +1128,7 @@ const S={
   mini:false, miniT:0, oc:{until:0,ready:0},
   set:{autoCollect:false,autoMax:8,collectAllMax:Infinity,sounds:true,cheapSounds:false,tips:true,
        sfxVol:0.75, musVol:0.42, muted:false, alertAt:1000},
-  best:null, seen:{}, totalCollected:0, mgAt:{}, track:0
+  best:null, seen:{}, totalCollected:0, mgAt:{}, track:0, globalId:''
 };
 /* diamond upgrades */
 const SUP={
@@ -1657,7 +1696,7 @@ function collectSfx(){
 }
 
 /* ---------- MUSIC ---------- */
-const music=new Audio(); music.preload='none';
+const music=new Audio(); music.preload='auto';
 const discEl=$('#disc'), barEls=[...$('#bars').children];
 let musicOn=false, mAnalyser=null, mData=null, fakeBars=0, useFake=false, silent=0;
 function loadTrack(i,autoplay){
@@ -1721,6 +1760,35 @@ $('#mMute').onclick=()=>{
   save();
 };
 $('#mPrev').onclick=()=>loadTrack(S.track-1,!music.paused);
+
+/* Browsers block sound until the page has been clicked, so try straight away
+   and, if that is refused, start on the very first click or key press instead. */
+let musicArmed=false, audioComplained=false;
+function tryStartMusic(){
+  if(S.set.muted||!music.paused) return;
+  if(!music.src) loadTrack(S.track,false);
+  const p=music.play();
+  if(p&&p.catch) p.catch(()=>armMusic());
+}
+function armMusic(){
+  if(musicArmed) return;
+  musicArmed=true;
+  const go=()=>{
+    document.removeEventListener('pointerdown',go,true);
+    document.removeEventListener('keydown',go,true);
+    musicArmed=false;
+    tryStartMusic();
+  };
+  document.addEventListener('pointerdown',go,true);
+  document.addEventListener('keydown',go,true);
+}
+music.addEventListener('error',()=>{
+  if(audioComplained||!music.src) return;
+  audioComplained=true;
+  let where=music.src;
+  try{ where=decodeURIComponent(music.src.split('/').slice(-2).join('/')); }catch(e){}
+  alert_('Music file not found','looked for '+where,'#ff5a4a');
+});
 
 /* ---------- OVERCHARGE ---------- */
 const ocWrap=$('#oc'), ocBtn=$('#ocBtn'), ocInfo=$('#ocInfo');
@@ -2223,6 +2291,51 @@ function renderSettings(root){
      alertSel);
   mk('Hover tooltips','Show name, odds and value when you point at a difficulty.',
      toggleBtn(S.set.tips,()=>{S.set.tips=!S.set.tips;save();refresh();},['On','Off']));
+  /* shared counter setup */
+  const gr=el('div','row'), gi=el('div','info');
+  const state = gMode==='shared' ? 'Connected through Claude. The numbers are shared.'
+    : gMode==='blob' ? (gWarn?'<b style="color:#ff9d8a">'+gWarn+'</b>':'Connected. The numbers are shared with everyone playing.')
+    : 'Not connected, so the globe numbers are only yours.';
+  gi.innerHTML='<h3>🌐 Shared counter</h3><p>'+state+'</p>'
+    +(gMode==='shared'?'':'<p style="font-size:12px;opacity:.75">Get a free code at '
+      +'<a href="https://jsonblob.com" target="_blank" rel="noopener" style="color:#8ff04a">jsonblob.com</a>'
+      +' — clear the box, type <b>{}</b>, press Save, then copy the long number from the address bar. '
+      +'Paste it below, or into <b>GLOBAL_ID</b> at the top of index.html so everybody shares it.</p>');
+  gr.appendChild(gi);
+  if(gMode!=='shared'){
+    const wrap=el('div'); wrap.style.cssText='display:flex;gap:8px;flex-wrap:wrap;align-items:center';
+    const inp=el('input'); inp.type='text'; inp.placeholder='paste your code';
+    inp.value=S.globalId||GLOBAL_ID||'';
+    inp.style.cssText='font-family:var(--f);font-weight:700;font-size:14px;padding:7px 9px;width:190px;'
+      +'border:3px solid var(--lime-edge);border-radius:9px;background:#eaffdc;color:var(--lime-ink)';
+    const useBtn=el('button','btn'); useBtn.textContent='Use code';
+    useBtn.onclick=async()=>{
+      S.globalId=inp.value.trim();
+      save(); gWarn='';
+      useBtn.textContent='Checking…';
+      G=mergeG({total:0,diff:{},mod:{},combo:{},rarest:null},await GNet.read());
+      paintGlobalBest(); refresh();
+      alert_(gWarn?'Could not connect':'Shared counter connected',gWarn||'',gWarn?'#ff5a4a':'#8ff04a');
+    };
+    const newBtn=el('button','btn alt'); newBtn.textContent='Make me one';
+    newBtn.onclick=async()=>{
+      newBtn.textContent='Making…';
+      try{
+        const id=await GNet.create();
+        inp.value=id; S.globalId=id; gWarn=''; save();
+        G=mergeG({total:0,diff:{},mod:{},combo:{},rarest:null},await GNet.read());
+        paintGlobalBest(); refresh();
+        alert_('Counter created','paste '+id+' into GLOBAL_ID','#8ff04a');
+      }catch(e){
+        newBtn.textContent='Make me one';
+        alert_('Could not make one automatically','use the jsonblob.com steps instead','#ff5a4a');
+      }
+    };
+    wrap.appendChild(inp); wrap.appendChild(useBtn); wrap.appendChild(newBtn);
+    gr.appendChild(wrap);
+  }
+  root.appendChild(gr);
+
   const st=el('div','hint');
   st.innerHTML='Collected <b>'+fmt(S.totalCollected)+'</b> difficulties &middot; <b>'
     +Object.keys(S.seen).length+' / '+DIFFS.length+'</b> discovered &middot; <b class="gem">'
@@ -2254,7 +2367,7 @@ $('#btnSet').onclick=()=>openModal('Settings',renderSettings);
 /* ---------- SAVE ---------- */
 function snapshot(){
   return {money:S.money,up:S.up,best:S.best,seen:S.seen,total:S.totalCollected,
-    gems:S.gems,sup:S.sup,mini:S.mini,track:S.track,mgAt:S.mgAt,
+    gems:S.gems,sup:S.sup,mini:S.mini,track:S.track,mgAt:S.mgAt,globalId:S.globalId,
     set:{...S.set,collectAllMax:S.set.collectAllMax===Infinity?-1:S.set.collectAllMax},
     field:blocks.slice(0,90).map(b=>({n:b.d.n,m:b.mods,x:b.fx,y:b.fy,t:b.target,s:b.scale}))};
 }
@@ -2265,6 +2378,7 @@ function applySave(o){
   S.money=o.money||0; Object.assign(S.up,o.up||{});
   S.gems=o.gems||0; Object.assign(S.sup,o.sup||{});
   S.mini=!!o.mini; S.miniT=Date.now(); S.track=o.track||0; S.mgAt=o.mgAt||{};
+  S.globalId=o.globalId||'';
   S.best=o.best||null; S.seen=o.seen||{}; S.totalCollected=o.total||0;
   if(o.set){Object.assign(S.set,o.set);
     S.set.collectAllMax=o.set.collectAllMax===-1?Infinity:o.set.collectAllMax;}
@@ -2374,7 +2488,7 @@ function startGame(){
   running=true;
   lastDropReset();
   /* the play button is a real click, so the browser lets the music start here */
-  if(!S.set.muted){ loadTrack(S.track,true); }
+  tryStartMusic();
   updateHUD();
 }
 function lastDropReset(){ cycleT=0; last=performance.now(); newCycle(); }
@@ -2442,11 +2556,12 @@ async function boot(){
     G=mergeG({total:0,diff:{},mod:{},combo:{},rarest:null},live);
     paintGlobalBest();
   });
-  setInterval(gFlush,20000);
+  setInterval(gFlush,30000);
   window.addEventListener('pagehide',()=>{ gFlush(); });
   $('#logo').src=LOGO_SRC;
   $('#scratchLogo').src=SCRATCH_SRC;
   paintMute();
+  tryStartMusic();          /* if the browser allows it, music is already going */
   last=performance.now(); requestAnimationFrame(frame);
   runCutscene();
 }

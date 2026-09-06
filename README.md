@@ -35,40 +35,35 @@ The sound effects are yours, so those are only a question if you didn't make the
 
 ## Global statistics
 
-The globe icons count what everyone playing has collected between them. Where those
-numbers actually live depends on where the page is running:
+The globe icons count what everyone playing has collected between them. Out of the box
+they only count for one browser. To make them shared:
 
-- **Inside Claude**, `window.storage` provides a shared bucket, and the numbers are
-  genuinely shared.
-- **Anywhere else, including GitHub Pages**, there is no shared storage, because Pages
-  serves static files and nothing else. Without a backend the tally quietly falls back to
-  this-browser-only, and the labels say so rather than pretending.
+1. Go to **jsonblob.com**
+2. Delete everything in the box, type `{}`, press **Save**
+3. Copy the long number at the end of the address bar
+4. Open `index.html`, find `const GLOBAL_ID='';` near the top of the script, and paste the
+   number between the quotes
 
-To make them real, set `GLOBAL_ENDPOINT` near the top of the script to a URL that answers
-`GET` with the current object and accepts `PUT` of a new one:
+That's it. Everyone loading your page now shares one counter.
 
-```js
-const GLOBAL_ENDPOINT = 'https://your-worker.example.workers.dev/stats';
-```
+You can also paste the code into Settings inside the game to test it without editing the
+file, but that only applies to you — the number has to go in `GLOBAL_ID` for everyone to
+share it. Settings also has a **Make me one** button that creates the counter for you, if
+your browser lets it read the response header.
 
-The object looks like this:
+Things worth knowing:
 
-```json
-{
-  "total": 12345,
-  "diff":   { "Insane": 42 },
-  "mod":    { "Golden": 7 },
-  "combo":  { "Insane|Golden,Large": 2 },
-  "rarest": { "name": "HELL", "mods": ["Golden"], "rarity": 4194304000, "when": 1757000000000 }
-}
-```
+- Anyone who views the page source can see the code and could overwrite or wipe the
+  numbers. Treat them as decoration, not a leaderboard worth defending.
+- jsonblob deletes counters that go 75 days without being touched. If yours stops working
+  after a long quiet spell, make a new one.
+- Players write in bursts every 30 seconds, and simultaneous saves use last-write-wins, so
+  the odd collect can go missing from the total.
+- If the counter is unreachable the game carries on and the labels go back to saying the
+  numbers are local.
 
-A Cloudflare Worker with a KV namespace does this in about twenty lines and costs nothing
-at this traffic. Note that the client does read-modify-write with last-write-wins, so
-simultaneous players can lose a count or two — fine for a counter, not fine if you ever
-want it to be authoritative. Anything public and writable will eventually be written to
-by someone unpleasant, so treat the numbers as decoration and don't put a rate limit past
-it and call it secure.
+Inside Claude none of this applies — `window.storage` provides a shared bucket and it is
+used automatically.
 
 ## Editing the game
 
