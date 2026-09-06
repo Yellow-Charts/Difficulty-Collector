@@ -1061,7 +1061,7 @@ const GKEY='difficulty-collector-global-v1';
      3. copy the long number at the end of the address bar
    Leave it empty and the counts are just for this browser.
    ============================================================ */
-const GLOBAL_ID='01a07854-1d16-7c23-9604-06adb397ced7';
+const GLOBAL_ID='https://difficulty-counter.ukalexsmith.workers.dev';
 
 const blobURL=()=>{
   let v=String(S.globalId||GLOBAL_ID||'').trim();
@@ -1099,6 +1099,10 @@ function mergeG(base,add){
   }
   return base;
 }
+/* jsonblob needs the whole document written back; a counter of your own is sent only
+   the new counts and does the adding up itself, which is both smaller and safe when two
+   people finish a session at the same moment. */
+const isOwnCounter=()=>{ const u=blobURL(); return !!u && u.indexOf('jsonblob.com')<0; };
 const GNet={
   async read(){
     if(window.storage){
@@ -1125,9 +1129,15 @@ const GNet={
       try{
         const r=await fetch(blobURL(),{method:'PUT',
           headers:{'Content-Type':'application/json','Accept':'application/json'},body:j});
-        if(r.ok){ gWarn=''; return true; }
-        gWarn='Saving to the shared counter failed (error '+r.status+').';
-      }catch(e){ gWarn='Could not reach jsonblob.com.'; }
+        if(r.ok){ gWarn=''; gWriteBlocked=false; return true; }
+        gWarn='The counter refused the save (error '+r.status+').'; gWriteBlocked=true;
+      }catch(e){
+        /* Writing from another website needs the store to answer a permission check first.
+           Reading needs no such check, which is exactly why reads work and writes do not.
+           Nothing here can change that; the store itself has to allow it. */
+        gWarn='This counter allows reading but not writing from a web page.';
+        gWriteBlocked=true;
+      }
     }
     try{ localStorage.setItem(GKEY,j); }catch(e){}
     return false;
@@ -1143,7 +1153,7 @@ const GNet={
     return loc.split('/').pop();
   }
 };
-let gWarn='';
+let gWarn='', gWriteBlocked=false;
 /* Walks the whole round trip and says what happened at each step, so a failure
    points at its own cause instead of just going quiet. */
 async function testGlobal(say){
@@ -1168,12 +1178,24 @@ async function testGlobal(say){
   say('Reading works. It currently holds '+fmt(data.total||0)+' collected difficulties.',3);
   let w;
   try{
-    w=await fetch(u,{method:'PUT',headers:{'Content-Type':'application/json','Accept':'application/json'},
-      body:JSON.stringify(data)});
+    w=isOwnCounter()
+      ? await fetch(u,{method:'POST',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({total:0,diff:{},mod:{},combo:{},rarest:null})})
+      : await fetch(u,{method:'PUT',headers:{'Content-Type':'application/json','Accept':'application/json'},
+          body:JSON.stringify(data)});
   }catch(e){
-    say('Reading works, but saving back was blocked by the browser.',0); return;
+    gWriteBlocked=true;
+    say('Reading works, but saving does not.',0);
+    say('This store lets a web page read from it but not write to it. That is the store\'s own '
+      +'rule and nothing in the game can get round it. You need a counter that accepts writes '
+      +'— the Global statistics part of the README has a free one that does.',0);
+    return;
   }
-  if(!w.ok){ say('Reading works, but saving back was refused with error '+w.status+'.',0); return; }
+  if(!w.ok){
+    gWriteBlocked=true;
+    say('Reading works, but saving was refused with error '+w.status+'.',0); return;
+  }
+  gWriteBlocked=false;
   say('Saving works too. The shared counter is fully connected.',3);
 }
 function gRecord(b){
@@ -1186,19 +1208,34 @@ function gRecord(b){
   if(!G.rarest||r.rarity>G.rarest.rarity){ G.rarest=r; paintGlobalBest(); }
 }
 let gBusy=false;
+let gFailStreak=0;
 async function gFlush(){
   if(gBusy) return;
+  if(gWriteBlocked&&gFailStreak>3&&(gFailStreak++%10)) return;   /* stop hammering a store that refuses */
   const has=gPend.total>0||gPend.rarest;
   if(!has) return;
   gBusy=true;
   const mine=gPend;
   gPend={total:0,diff:{},mod:{},combo:{},rarest:null};
   try{
-    const live=await GNet.read();
-    G=mergeG(mergeG({total:0,diff:{},mod:{},combo:{},rarest:null},live),mine);
-    await GNet.write(G);
+    if(isOwnCounter()){
+      const r=await fetch(blobURL(),{method:'POST',
+        headers:{'Content-Type':'application/json'},body:JSON.stringify(mine)});
+      if(r.ok){
+        G=mergeG({total:0,diff:{},mod:{},combo:{},rarest:null},await r.json());
+        gMode='blob'; gWarn=''; gWriteBlocked=false; gFailStreak=0;
+      } else {
+        gWarn='The counter answered with error '+r.status+'.'; gWriteBlocked=true;
+        gFailStreak++; mergeG(gPend,mine);
+      }
+    } else {
+      const live=await GNet.read();
+      G=mergeG(mergeG({total:0,diff:{},mod:{},combo:{},rarest:null},live),mine);
+      const ok=await GNet.write(G);
+      gFailStreak=ok?0:gFailStreak+1;
+    }
     paintGlobalBest();
-  }catch(e){ mergeG(gPend,mine); }
+  }catch(e){ gWriteBlocked=true; gFailStreak++; mergeG(gPend,mine); }
   gBusy=false;
 }
 const gDiffCount=d=>(G.diff[d.n]||0)+(gPend.diff[d.n]||0);
@@ -1206,7 +1243,8 @@ const gComboCount=(d,mods)=>{
   const k=comboKey(d,mods);
   return (G.combo[k]||0)+(gPend.combo[k]||0);
 };
-const gLabel=()=>gMode==='local'?'this browser only':'collected by everyone';
+const gLabel=()=>gMode==='local'?'this browser only'
+  :gWriteBlocked?"everyone's total, yours not counted yet":'collected by everyone';
 const gShared=()=>gMode!=='local';
 function globalComboLine(d,mods){
   if(!mods.length){
@@ -2560,7 +2598,12 @@ function renderSettings(root){
     : localFile ? '<b style="color:#ffcf3d">You have opened this page straight from your computer, '
         +'and browsers block pages opened that way from talking to the internet. The shared counter '
         +'can only work once the game is published online.</b>'
-    : gMode==='blob' ? (gWarn?'<b style="color:#ff9d8a">'+gWarn+'</b>':'Connected. The numbers are shared with everyone playing.')
+    : gMode==='blob' ? (gWriteBlocked
+        ? '<b style="color:#ffcf3d">Half connected.</b> It can read everyone\'s totals but cannot '
+          +'add yours to them, because this store does not accept writes from a web page. '
+          +'The README has a free alternative that does.'
+        : (gWarn?'<b style="color:#ff9d8a">'+gWarn+'</b>'
+                :'Connected. The numbers are shared with everyone playing.'))
     : 'Not connected, so the globe numbers are only yours.';
   gi.innerHTML='<h3>🌐 Shared counter</h3><p>'+state+'</p>'
     +(gMode==='shared'?'':'<p style="font-size:12px;opacity:.75">Get a free code at '
@@ -2597,6 +2640,19 @@ function renderSettings(root){
         alert_('Could not make one automatically','use the jsonblob.com steps instead','#ff5a4a');
       }
     };
+    if(S.globalId&&GLOBAL_ID&&S.globalId!==GLOBAL_ID){
+      const warn=el('div');
+      warn.style.cssText='width:100%;font-size:11.5px;color:#ffcf3d;margin-top:4px';
+      warn.textContent='Heads up: the code saved in this browser is being used instead of the one '
+        +'in index.html. Press Clear to go back to the file\'s one.';
+      gr.appendChild(warn);
+    }
+    const clrBtn=el('button','btn alt'); clrBtn.textContent='Clear';
+    clrBtn.onclick=async()=>{
+      S.globalId=''; save(); gWarn=''; gWriteBlocked=false;
+      G=mergeG({total:0,diff:{},mod:{},combo:{},rarest:null},await GNet.read());
+      paintGlobalBest(); refresh();
+    };
     const testBtn2=el('button','btn alt'); testBtn2.textContent='Test connection';
     const tOut=el('div');
     tOut.style.cssText='width:100%;font-size:11.5px;line-height:1.5;margin-top:7px;word-break:break-all';
@@ -2612,7 +2668,8 @@ function renderSettings(root){
         testBtn2.textContent='Test connection';
       });
     };
-    wrap.appendChild(inp); wrap.appendChild(useBtn); wrap.appendChild(newBtn); wrap.appendChild(testBtn2);
+    wrap.appendChild(inp); wrap.appendChild(useBtn); wrap.appendChild(clrBtn);
+    wrap.appendChild(newBtn); wrap.appendChild(testBtn2);
     gr.appendChild(wrap); gr.appendChild(tOut);
   }
   root.appendChild(gr);
@@ -2914,7 +2971,9 @@ async function boot(){
     G=mergeG({total:0,diff:{},mod:{},combo:{},rarest:null},live);
     paintGlobalBest();
   });
-  setInterval(gFlush,30000);
+  /* Cloudflare's free tier allows 1,000 saves a day across everyone playing, so this
+   sends updates every three minutes rather than every thirty seconds. */
+  setInterval(gFlush,180000);
   window.addEventListener('pagehide',()=>{ gFlush(); });
   $('#logo').src=LOGO_SRC;
   $('#scratchLogo').src=SCRATCH_SRC;
