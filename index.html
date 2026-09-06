@@ -271,7 +271,7 @@ h4.sec:first-child{margin-top:0}
   #music{max-width:150px;padding:4px 6px;gap:5px}
   #mtext,#bars{display:none}
   #oc{width:82px;top:52px}
-  #btnShop,#btnIndex,#btnSet,#btnSuper,#btnGames{flex:1 1 30%}
+  #btnShop,#btnIndex,#btnSet,#btnSuper,#btnGames,#btnStats{flex:1 1 30%}
   #g48{--tsz:52px}.t48{font-size:8.5px}
   #ms button{width:30px;height:30px}
 }
@@ -373,6 +373,7 @@ h4.sec:first-child{margin-top:0}
   <button class="btn gemb" id="btnSuper">Super</button>
   <button class="btn alt" id="btnGames">Games</button>
   <button class="btn alt" id="btnIndex">Index</button>
+  <button class="btn alt" id="btnStats">Stats</button>
   <button class="btn alt" id="btnSet">Settings</button>
   <button class="btn alt" id="btnHelp" title="How to play">?</button>
 </div>
@@ -536,13 +537,24 @@ const sizeOf=mods=>{let k=1; for(const n of mods){const m=MOD_BY[n]; if(m&&m.sc)
    ============================================================ */
 let mgCleanup=null;
 const bestRarity=()=>S.best?S.best.rarity:2;
+/* A run is paid as a multiple of what your rarest collect is worth, so a minigame
+   can never wildly outrun the dropper. A solid run is worth about one rare find,
+   an exceptional one about three, and past that it grows only slowly. */
+const bestValue=()=>Math.max(1,Math.pow(bestRarity(),0.75)*marketMult());
 const mgScale=()=>Math.max(1,Math.sqrt(bestRarity()));
 const mgFresh=k=>(Date.now()-(S.mgAt[k]||0))>90000?1:0.35;
+function payFactor(score){
+  if(score<=0) return 0;
+  let f=1.55*Math.pow(score/60,0.55);
+  if(f>3) f=3+Math.log2(f/3);          /* soft ceiling rather than a hard cut off */
+  return f;
+}
 function mgAward(k,score){
   const f=mgFresh(k); S.mgAt[k]=Date.now();
   score=Math.max(0,score);
-  const money=Math.round(score*mgScale()*marketMult()*f);
-  const gems=Math.floor(score/12*Math.pow(Math.max(2,bestRarity()),0.25)*f);
+  const money=Math.round(bestValue()*payFactor(score)*f);
+  /* diamonds ramp up instead of starting flat, so a weak run pays very little */
+  const gems=Math.max(0,Math.floor(Math.pow(score/45,1.4)*Math.pow(Math.max(2,bestRarity()),0.25)*f));
   S.money+=money; S.gems+=gems; updateHUD(); save();
   return {money,gems,reduced:f<1};
 }
@@ -561,15 +573,16 @@ function paintBlock(ctx,d,x,y,sz){
 const MG=[
   {k:'mines', n:'Difficulty Sweeper', d:'Eight by eight with ten DEATH blocks buried in it. Right click to flag.'},
   {k:'flap',  n:'Flappy Difficulty',  d:'Your rarest find flies through the gaps. Click or press space.'},
-  {k:'tetr',  n:'Difficulty Stack',   d:'Arrows to move and rotate, space to slam it down.'},
-  {k:'snake', n:'Chart Snake',        d:'Eat difficulties, get longer, do not eat yourself.'},
-  {k:'merge', n:'Difficulty Merge',   d:'Drag one difficulty onto a matching one to fuse it into the next one up the chart.'}
+  {k:'tetr',  n:'Difficulty Stack',   d:'Arrows or WASD to move and rotate, space to slam it down.'},
+  {k:'snake', n:'Chart Snake',        d:'Arrows or WASD. Eat difficulties, get longer, do not eat yourself.'},
+  {k:'merge', n:'Difficulty Merge',   d:'Drag one onto a matching one. No losing — cash out when you like, board is saved.'}
 ];
 function renderGames(root){
   const h=el('div','hint');
-  h.innerHTML='Rewards scale with your rarest collect ('+(S.best?modLabel(S.best.mods)+S.best.name:'nothing yet')
-    +', currently <b>&times;'+fmt(mgScale())+'</b>). Leave 90 seconds between runs of the same game '
-    +'for the full payout.';
+  h.innerHTML='Payouts are measured against your rarest collect ('
+    +(S.best?modLabel(S.best.mods)+S.best.name+', worth <b>$'+fmt(bestValue())+'</b>':'nothing yet')
+    +'). A good run pays about one of those, a great one about three. '
+    +'Leave 90 seconds between runs of the same game for the full amount.';
   root.appendChild(h);
   const menu=el('div'); menu.id='mgmenu';
   MG.forEach(g=>{
@@ -675,7 +688,11 @@ function mgFlap(api){
     api.out.innerHTML='Now flying as <b>'+me.n+'</b>';
     beep(520+tier*40,0.09,'triangle',0.08);
   };
-  function flap(){ if(over){ restart(); return; } vy=-6.4; beep(660,0.05,'square',0.05); }
+  let readyAt=0;
+  function flap(){
+    if(over){ if(Date.now()>=readyAt) restart(); return; }
+    vy=-6.4; beep(660,0.05,'square',0.05);
+  }
   function restart(){ y=H2/2; vy=0; sc=0; over=false; tier=-1; setTier(0);
                       pipes=[{x:W2+40,y:90+Math.random()*(H2-280)}];
                       api.score(0); loop(); }
@@ -698,12 +715,19 @@ function mgFlap(api){
     const hit=y<16||y>H2-16||pipes.some(p=>70+15>p.x&&70-15<p.x+54&&(y-15<p.y||y+15>p.y+GAP));
     if(hit&&!over){
       over=true; cancelAnimationFrame(raf);
+      readyAt=Date.now()+1400;      /* let the score sink in before a click restarts it */
       const r=api.done(sc);
       ctx.fillStyle='rgba(8,12,16,.84)'; ctx.fillRect(0,H2/2-46,W2,92);
       ctx.fillStyle='#eafbe0'; ctx.textAlign='center'; ctx.font='800 17px Nunito,sans-serif';
       ctx.fillText('+$'+fmt(r.money),W2/2,H2/2-6);
       ctx.font='700 12px Nunito,sans-serif'; ctx.fillStyle='#b7d3a6';
-      ctx.fillText('reached '+me.n+' · click to fly again',W2/2,H2/2+18);
+      ctx.fillText('reached '+me.n,W2/2,H2/2+18);
+      setTimeout(()=>{
+        if(!over) return;
+        ctx.fillStyle='rgba(8,12,16,.84)'; ctx.fillRect(0,H2/2+26,W2,24);
+        ctx.fillStyle='#8ff04a'; ctx.font='800 13px Nunito,sans-serif'; ctx.textAlign='center';
+        ctx.fillText('click to fly again',W2/2,H2/2+42);
+      },1400);
       beep(200,0.3,'sawtooth',0.1);
     }
   }
@@ -777,13 +801,15 @@ function mgTetris(api){
   }
   const key=e=>{
     if(over) return;
-    const k=e.key;
-    if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown',' '].indexOf(k)>=0) e.preventDefault();
-    if(k==='ArrowLeft'&&!hit(px-1,py,p)) px--;
-    else if(k==='ArrowRight'&&!hit(px+1,py,p)) px++;
-    else if(k==='ArrowDown'){ if(hit(px,py+1,p)) lock(); else py++; }
-    else if(k==='ArrowUp') rot();
-    else if(k===' '){ while(!hit(px,py+1,p)) py++; lock(); }
+    const k={arrowleft:'L',a:'L',arrowright:'R',d:'R',arrowdown:'D',s:'D',
+             arrowup:'U',w:'U',' ':'S'}[e.key.toLowerCase()];
+    if(!k) return;
+    e.preventDefault();
+    if(k==='L'&&!hit(px-1,py,p)) px--;
+    else if(k==='R'&&!hit(px+1,py,p)) px++;
+    else if(k==='D'){ if(hit(px,py+1,p)) lock(); else py++; }
+    else if(k==='U') rot();
+    else if(k==='S'){ while(!hit(px,py+1,p)) py++; lock(); }
     if(!over) draw();
   };
   window.addEventListener('keydown',key);
@@ -825,16 +851,31 @@ function mgSnake(api){
       ctx.fillStyle=i?'#8ff04a':'#ffcf3d'; ctx.fillRect(s.x*CS+3,s.y*CS+3,CS-6,CS-6);
     });
   }
+  let readyAt=0;
+  function restart(){
+    if(Date.now()<readyAt) return;
+    snake=[{x:8,y:8}]; dir={x:1,y:0}; next=dir; sc=0; over=false; speed=185;
+    api.score(0); api.out.textContent=''; drop(); draw(); run();
+  }
   function end(){
     over=true; clearTimeout(timer);
+    readyAt=Date.now()+1400;
     const r=api.done(sc);
     ctx.fillStyle='rgba(8,12,16,.85)'; ctx.fillRect(0,W2/2-38,W2,76);
     ctx.fillStyle='#eafbe0'; ctx.textAlign='center'; ctx.font='800 17px Nunito,sans-serif';
     ctx.fillText('+$'+fmt(r.money),W2/2,W2/2+2);
     api.out.innerHTML='<b>Length '+snake.length+'. '+payLine(r)+'</b>';
     beep(190,0.28,'sawtooth',0.1);
+    setTimeout(()=>{
+      if(!over) return;
+      ctx.fillStyle='rgba(8,12,16,.85)'; ctx.fillRect(0,W2/2+16,W2,26);
+      ctx.fillStyle='#8ff04a'; ctx.font='800 13px Nunito,sans-serif'; ctx.textAlign='center';
+      ctx.fillText('click or press space to play again',W2/2,W2/2+34);
+    },1400);
   }
-  function run(){ timer=setTimeout(()=>{ if(over) return; step(); if(over) return; draw(); run(); },speed); }
+  cv.onpointerdown=e=>{ e.stopPropagation(); if(over) restart(); };
+  function run(){ clearTimeout(timer);
+    timer=setTimeout(()=>{ if(over) return; step(); if(over) return; draw(); run(); },speed); }
   const key=e=>{
     const m={arrowleft:{x:-1,y:0},a:{x:-1,y:0},arrowright:{x:1,y:0},d:{x:1,y:0},
              arrowup:{x:0,y:-1},w:{x:0,y:-1},arrowdown:{x:0,y:1},s:{x:0,y:1}}[e.key.toLowerCase()];
@@ -848,17 +889,29 @@ function mgSnake(api){
 }
 
 /* ---------- 5. Difficulty Merge ---------- */
+/* There is no losing here. The board keeps its state between visits and you decide
+   when to cash it in. Climbing past Insane is genuinely hard, so every rung up the
+   chart is worth substantially more than the one below it. */
+const MERGE_N=5;
+const mergeTileScore=tier=>Math.pow(1.55,tier);
+const mergeBoardScore=b=>b.reduce((t,v)=>t+(v?mergeTileScore(v-1):0),0);
 function mgMerge(api){
-  const N=5;
+  const N=MERGE_N;
   const grid=el('div'); grid.id='g48';
   grid.style.gridTemplateColumns='repeat('+N+',var(--tsz))';
   api.wrap.appendChild(grid);
-  const CH=BY_RARITY;                       /* the ladder you climb */
-  const cells=[], b=Array(N*N).fill(0);     /* 0 empty, otherwise index into CH plus one */
-  let sc=0, over=false, sel=-1, feed=null;
+  const CH=BY_RARITY;
+  const cells=[];
+  let b=(S.mergeBoard&&S.mergeBoard.length===N*N)?S.mergeBoard.slice():Array(N*N).fill(0);
+  let sel=-1, feed=null;
   for(let i=0;i<N*N;i++){
     const t=el('div','t48'); t.dataset.i=i; cells.push(t); grid.appendChild(t);
   }
+  const cash=el('button','btn'); cash.style.cssText='font-size:15px;padding:8px 16px';
+  const note=el('div','hint'); note.style.textAlign='center';
+  api.wrap.appendChild(cash); api.wrap.appendChild(note);
+
+  const keep=()=>{ S.mergeBoard=b.slice(); save(); };
   function paint(){
     b.forEach((v,i)=>{
       const t=cells[i];
@@ -874,7 +927,15 @@ function mgMerge(api){
                 +parseInt(h.substr(4,2),16)*0.114)/255;
       t.style.color=lum>0.55?'#12200c':'#ffffff';
     });
+    const sc=mergeBoardScore(b);
     api.score(sc);
+    let top=0; b.forEach(v=>{ if(v>top) top=v; });
+    cash.textContent='Cash out for $'+fmt(Math.round(bestValue()*payFactor(sc)*mgFresh('merge')));
+    cash.disabled=sc<=0;
+    const full=b.indexOf(0)<0;
+    note.innerHTML=(top?'Best on the board: <b>'+CH[top-1].n+'</b>. ':'')
+      +(full?'<b style="color:#ffb03d">Board is full. Merge something or cash out.</b>'
+            :'Cashing out clears the board and starts you fresh.');
   }
   function addTile(){
     const free=b.map((v,i)=>v?null:i).filter(v=>v!==null);
@@ -882,32 +943,28 @@ function mgMerge(api){
     b[free[(Math.random()*free.length)|0]]=Math.random()<0.78?1:2;
     return true;
   }
-  function pairExists(){
-    const seen={};
-    for(const v of b){ if(!v) continue; if(seen[v]) return true; seen[v]=1; }
-    return false;
-  }
   function merge(from,to){
     if(from===to||!b[from]||b[from]!==b[to]) return false;
     const lvl=b[to];
-    if(lvl>=CH.length) return false;          /* already at the top of the chart */
+    if(lvl>=CH.length) return false;
     b[to]=lvl+1; b[from]=0;
-    sc+=(lvl+1)*3;
     cells[to].animate&&cells[to].animate(
       [{transform:'scale(1)'},{transform:'scale(1.22)'},{transform:'scale(1)'}],{duration:180});
-    beep(430+lvl*45,0.07,'triangle',0.08);
-    if(b[to]>=CH.length) api.out.innerHTML='<b>'+CH[CH.length-1].n+'. That is the top of the chart.</b>';
-    addTile(); paint(); check();
+    beep(430+Math.min(lvl,18)*45,0.07,'triangle',0.08);
+    addTile(); paint(); keep();
     return true;
   }
-  function check(){
-    if(b.indexOf(0)>=0||pairExists()) return;
-    over=true; clearInterval(feed);
+  cash.onclick=()=>{
+    const sc=mergeBoardScore(b);
+    if(sc<=0) return;
     const r=api.done(sc);
     let top=0; b.forEach(v=>{ if(v>top) top=v; });
-    api.out.innerHTML='<b>Jammed at '+CH[Math.max(0,top-1)].n+'. '+payLine(r)+'</b>';
-  }
-  /* tap one then the other, or just drag between them - both work */
+    b=Array(N*N).fill(0); sel=-1;
+    for(let i=0;i<6;i++) addTile();
+    keep(); paint();
+    api.out.innerHTML='<b>Cashed out at '+CH[Math.max(0,top-1)].n+'. '+payLine(r)+'</b>';
+  };
+
   let downAt=null, moved=false;
   const cellAt=ev=>{
     const n=document.elementFromPoint(ev.clientX,ev.clientY);
@@ -915,7 +972,6 @@ function mgMerge(api){
     return c?+c.dataset.i:-1;
   };
   grid.addEventListener('pointerdown',ev=>{
-    if(over) return;
     ev.preventDefault();
     const i=cellAt(ev);
     if(i<0) return;
@@ -926,7 +982,7 @@ function mgMerge(api){
   });
   grid.addEventListener('pointermove',()=>{ if(downAt!=null) moved=true; });
   grid.addEventListener('pointerup',ev=>{
-    if(over||downAt==null) return;
+    if(downAt==null) return;
     const i=cellAt(ev);
     if(moved&&i>=0&&i!==downAt&&b[downAt]&&b[downAt]===b[i]){ sel=-1; merge(downAt,i); }
     else if(moved){ sel=-1; paint(); }
@@ -934,15 +990,12 @@ function mgMerge(api){
   });
   grid.addEventListener('pointercancel',()=>{ downAt=null; });
 
-  for(let i=0;i<6;i++) addTile();
-  paint();
-  api.out.innerHTML='Drag a difficulty onto a matching one to fuse them. '
-    +'A new one arrives every few seconds, so keep the board clear.';
-  feed=setInterval(()=>{
-    if(over) return;
-    addTile(); paint(); check();
-  },5200);
-  mgCleanup=()=>clearInterval(feed);
+  if(!b.some(v=>v)) for(let i=0;i<6;i++) addTile();
+  paint(); keep();
+  api.out.innerHTML='Drag a difficulty onto a matching one to fuse them. Your board is kept '
+    +'between visits, and each rung up the chart is worth far more than the last.';
+  feed=setInterval(()=>{ if(addTile()){ paint(); keep(); } },5200);
+  mgCleanup=()=>{ clearInterval(feed); keep(); };
 }
 
 /* ---------- SAVE ---------- */
@@ -1127,8 +1180,8 @@ const S={
   sup:{prism:0,vault:0,polish:0,reactor:0,overload:0,refinery:0,room:0},
   mini:false, miniT:0, oc:{until:0,ready:0},
   set:{autoCollect:false,autoMax:8,collectAllMax:Infinity,sounds:true,cheapSounds:false,tips:true,
-       sfxVol:0.75, musVol:0.42, muted:false, alertAt:1000},
-  best:null, seen:{}, totalCollected:0, mgAt:{}, track:0, globalId:''
+       sfxVol:0.75, musVol:0.42, muted:false, alertAt:1000, calm:false},
+  best:null, seen:{}, totalCollected:0, mgAt:{}, track:0, globalId:'', mergeBoard:null
 };
 /* diamond upgrades */
 const SUP={
@@ -1241,7 +1294,7 @@ function shapeSVG(d,shape){
       +'" stroke-linecap="round"/>';
     const gw=glyphSVG(d);
     if(gw) body+='<g transform="translate(50,50) scale(0.62) translate(-50,-50)">'+gw+'</g>';
-    return '<svg viewBox="-'+PAD+' -'+PAD+' '+VB+' '+VB+'">'
+    return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="-'+PAD+' -'+PAD+' '+VB+' '+VB+'">'
       +(defs?'<defs>'+defs+'</defs>':'')+body+'</svg>';
   }
   /* the centre symbol has to survive every shape, including the drawn
@@ -1275,7 +1328,7 @@ function shapeSVG(d,shape){
       body+='<path d="'+path+'" fill="url(#'+pid+')"/>';   /* crushes the symbol too */
     }
   }
-  return '<svg viewBox="-'+PAD+' -'+PAD+' '+VB+' '+VB+'">'
+  return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="-'+PAD+' -'+PAD+' '+VB+' '+VB+'">'
     +(defs?'<defs>'+defs+'</defs>':'')+body+'</svg>';
 }
 
@@ -1288,9 +1341,10 @@ function buildVisual(d,mods){
   if(has('Rhombus')) tf.push('rotate(45deg)');
   if(has('Flipped')) tf.push('scaleY(-1)');
   if(tf.length) root.style.transform=tf.join(' ');
-  const jit=el('div',has('Jittering')?'jit':'');
-  const mot=el('div',has('Spinning')?'spin':(has('Rocking')?'rock':''));
-  const bl =el('div',has('Blinking')?'blink':'');
+  const calm=S.set.calm;               /* calm mode stills the twitchier animations */
+  const jit=el('div',(!calm&&has('Jittering'))?'jit':'');
+  const mot=el('div',calm?'':(has('Spinning')?'spin':(has('Rocking')?'rock':'')));
+  const bl =el('div',(!calm&&has('Blinking'))?'blink':'');
   const fx =el('div');
   const f=[];
   if(has('Shiny'))      f.push('hue-rotate(45deg)','brightness(1.2)','saturate(1.15)');
@@ -1299,12 +1353,11 @@ function buildVisual(d,mods){
   if(has('Bitcrushed')) f.push('contrast(1.35)','saturate(1.3)');
   if(has('Golden'))     f.push('sepia(1)','saturate(4.2)','hue-rotate(-16deg)','brightness(1.18)','contrast(1.05)');
   if(has('Frozen'))     f.push('hue-rotate(165deg)','saturate(.62)','brightness(1.22)');
-  if(has('Neon'))       f.push('saturate(1.9)','brightness(1.25)',
-                               'drop-shadow(0 0 6px currentColor)','drop-shadow(0 0 14px currentColor)');
+  if(has('Neon'))       f.push('saturate(1.75)','brightness(1.2)','drop-shadow(0 0 5px currentColor)');
   if(f.length) fx.style.filter=f.join(' ');
   if(has('Neon')) fx.style.color=Array.isArray(d.c)?d.c[0]:d.c;
   if(has('Ghostly')) fx.style.opacity='0.38';
-  const dsc=el('div',has('Disco')?'disco':'');
+  const dsc=el('div',(!calm&&has('Disco'))?'disco':'');
   dsc.innerHTML=shapeSVG(d,shape);
   if(has('Shiny')){
     dsc.style.position='relative';
@@ -1317,9 +1370,19 @@ function buildVisual(d,mods){
   const cols=mods.map(n=>MOD_BY[n]).filter(m=>m&&m.col).map(m=>m.col);
   if(cols.length>=2){
     dsc.style.position='relative';
+    dsc.style.isolation='isolate';        /* keep the blend inside the block */
     const wash=el('div');
     wash.style.cssText='position:absolute;inset:0;pointer-events:none;mix-blend-mode:color;'
-      +'opacity:.82;background:linear-gradient(135deg,'+cols.join(',')+')';
+      +'opacity:.78;background:linear-gradient(135deg,'+cols.join(',')+')';
+    const svg=dsc.querySelector('svg');
+    if(svg){
+      /* mask the gradient with the block's own outline, otherwise it paints a
+         square halo over the background around the shape */
+      const uri='url("data:image/svg+xml;charset=utf8,'+encodeURIComponent(svg.outerHTML)+'")';
+      wash.style.webkitMaskImage=uri;  wash.style.maskImage=uri;
+      wash.style.webkitMaskSize='100% 100%'; wash.style.maskSize='100% 100%';
+      wash.style.webkitMaskRepeat='no-repeat'; wash.style.maskRepeat='no-repeat';
+    }
     dsc.appendChild(wash);
   }
   if(has('Golden')){
@@ -1336,7 +1399,7 @@ function buildVisual(d,mods){
         +');mix-blend-mode:'+g[2]+';opacity:.55;pointer-events:none';
       c.innerHTML=dsc.firstChild?dsc.firstChild.outerHTML:''; dsc.appendChild(c);
     });
-    dsc.classList.add('jit');
+    if(!calm) dsc.classList.add('jit');
   }
   fx.appendChild(dsc); bl.appendChild(fx); mot.appendChild(bl); jit.appendChild(mot); root.appendChild(jit);
   [jit,mot,bl,fx,dsc].forEach(x=>{x.style.width='100%';x.style.height='100%';});
@@ -1636,7 +1699,8 @@ function measure(){
   if(S.mini) paintMini();
 }
 function place(b){
-  const size=Math.min(BASE*b.scale,Math.min(W*0.92,H*0.82)); b.size=size;
+  const shrink=S.set.calm?0.62:1;
+  const size=Math.min(BASE*b.scale*shrink,Math.min(W*0.92,H*0.82)); b.size=size;
   b.el.style.width=size+'px'; b.el.style.height=size+'px';
   b.el.style.left=Math.max(-size*0.14,Math.min(W-size*0.86,b.fx*W-size/2))+'px';
   b.el.style.top =Math.max(2,b.fy*H-size*BOTTOM_FRAC)+'px';
@@ -1688,6 +1752,24 @@ function playSfx(f,vol){
   }catch(e){}
 }
 const tierFor=r=>{ for(const t of SFX_TIERS) if(r>=t[0]) return t[1]; return SFX_TIERS[SFX_TIERS.length-1][1]; };
+/* loads every sound and track once to report which ones the browser can actually reach */
+function checkAudio(done){
+  const list=SFX_FILES.concat(TRACKS.map(t=>t.f));
+  const out=[]; let i=0;
+  const next=()=>{
+    if(i>=list.length){ done(out); return; }
+    const f=list[i++], a=new Audio();
+    let settled=false;
+    const finish=ok=>{ if(settled) return; settled=true; out.push({f,ok}); next(); };
+    a.addEventListener('loadedmetadata',()=>finish(true));
+    a.addEventListener('error',()=>finish(false));
+    setTimeout(()=>finish(false),5000);
+    a.preload='metadata';
+    a.src=sfxSrc(f);
+    a.load();
+  };
+  next();
+}
 let lastCollectSfx=0;
 function collectSfx(){
   const n=performance.now();
@@ -1806,8 +1888,8 @@ function updateOC(){
     ocBtn.disabled=true; ocBtn.classList.add('live'); ocBtn.textContent='CHARGED';
     ocInfo.textContent=((S.oc.until-t)/1000).toFixed(1)+'s left';
   } else if(t<S.oc.ready){
-    ocBtn.disabled=true; ocBtn.classList.remove('live'); ocBtn.textContent='OVERCHARGE';
-    ocInfo.textContent='ready in '+Math.ceil((S.oc.ready-t)/1000)+'s';
+    ocBtn.disabled=true; ocBtn.classList.remove('live'); ocBtn.textContent='RECHARGING';
+    ocInfo.textContent=Math.ceil((S.oc.ready-t)/1000)+'s to go';
   } else {
     ocBtn.disabled=false; ocBtn.classList.remove('live'); ocBtn.textContent='OVERCHARGE';
     ocInfo.textContent='x'+ocLuck()+' luck, 2x speed';
@@ -1867,12 +1949,39 @@ function rollDrop(bonus){
 }
 const modLabel=mods=>mods.length?mods.join(' ')+' ':'';
 
+/* The same maths rollDrop uses, but worked out rather than rolled, so the odds of
+   any combination at your current luck can be shown anywhere. */
+function trueOdds(d,mods,bonus){
+  const L=luck()*(bonus||1), FLOOR=BY_RARITY[0];
+  let p=0, miss=1;
+  for(const x of ROLL_ORDER){
+    if(x===FLOOR){ if(d===FLOOR) p=miss; break; }
+    const c=Math.min(1,L/x.r);
+    if(x===d){ p=c*miss; break; }
+    miss*=(1-c);
+  }
+  if(!p) return Infinity;
+  const ML=modLuck();
+  for(const m of MOD_ORDER){
+    const c=Math.min(0.85,ML/m.r);
+    p *= (mods.indexOf(m.n)>=0)?c:(1-c);
+  }
+  return p>0?1/p:Infinity;
+}
+
 /* ---------- SPAWNING ---------- */
 function spawn(bonus,fromX){
   if(blocks.length>=capacity()) makeRoom();
   const roll=rollDrop(bonus), d=roll.d, mods=roll.mods;
   const scale=sizeOf(mods);
   const tr=totalRarity(d,mods);
+  /* calm mode banks anything at or under the auto collect line without ever putting
+     it on the ground, so only the things you care about actually show up */
+  if(S.set.calm&&S.set.autoCollect&&tr<=S.set.autoMax){
+    bank({d,mods,rarity:tr,trueRarity:roll.trueRarity,value:value(d,mods)});
+    updateHUD();
+    return;
+  }
   const b={d,mods,scale,rarity:tr,trueRarity:roll.trueRarity,value:value(d,mods),
            fy:(DROP_W*0.72)/Math.max(1,H), vy:0.12, landed:false};
   b.fx=Math.min(0.94,Math.max(0.06,(fromX==null?dropX:fromX)/W+rnd(-0.02,0.02)));
@@ -1928,20 +2037,26 @@ function removeBlock(b){
 }
 
 /* ---------- COLLECTING ---------- */
-function collect(b){
-  if(!b||b.collected) return;
-  b.collected=true;
+/* the money and record keeping half of collecting, with no display attached */
+function bank(b){
   S.money+=b.value; S.totalCollected++;
   S.seen[b.d.n]=(S.seen[b.d.n]||0)+1;
   gRecord(b);
   if(!S.best||b.rarity>S.best.rarity)
-    S.best={name:b.d.n,color:b.d.c,mods:b.mods.slice(),value:b.value,rarity:b.rarity};
+    S.best={name:b.d.n,color:b.d.c,mods:b.mods.slice(),value:b.value,rarity:b.rarity,
+            trueRarity:b.trueRarity||null,luckThen:luck()};
+  if(Math.random()<gemChance()){ const g=gemsFor(b.rarity); S.gems+=g; return g; }
+  return 0;
+}
+function collect(b){
+  if(!b||b.collected) return;
+  b.collected=true;
+  const gained=bank(b);
   const f=el('div','float'); f.textContent='+$'+fmt(b.value);
   f.style.left=(b.fx*W-18)+'px'; f.style.top=(b.fy*H-b.size*0.6)+'px';
   fxEl.appendChild(f); setTimeout(()=>f.remove(),800);
-  /* diamonds: a small slice of collects pay out the square root of the rarity */
-  if(Math.random()<gemChance()){
-    const g=gemsFor(b.rarity); S.gems+=g;
+  if(gained){
+    const g=gained;
     const gf=el('div','float'); gf.textContent='+'+fmt(g)+' 💎';
     gf.style.color='#5fe7ff';
     gf.style.left=(b.fx*W-18)+'px'; gf.style.top=(b.fy*H-b.size*0.6-22)+'px';
@@ -1966,7 +2081,7 @@ function blockFromEl(node){
 }
 scene.addEventListener('pointerdown',ev=>{
   /* let the music and overcharge controls have their own clicks */
-  if(ev.target.closest&&ev.target.closest('#music,#oc')) return;
+  if(ev.target.closest&&ev.target.closest('#music,#oc,#full')) return;
   holding=true; scene.setPointerCapture&&scene.setPointerCapture(ev.pointerId);
   collect(blockFromEl(ev.target));
 });
@@ -2220,7 +2335,8 @@ function renderIndexPreview(){
   const t=$('#pvTitle');
   if(t) t.innerHTML=modLabel(selMods)+sel.n+' &middot; <b>'+odds(totalRarity(sel,selMods))
     +'</b> &middot; size &times;'+(+scale.toFixed(2))+' &middot; $'+fmt(value(sel,selMods))
-    +'<div class="gline">🌐 '+globalComboLine(sel,selMods)+'</div>';
+    +'<div class="gline">🌐 '+globalComboLine(sel,selMods)+'</div>'
+    +'<div class="gline">🎯 '+odds(trueOdds(sel,selMods))+' at your current luck</div>';
 }
 
 /* ---------- SETTINGS ---------- */
@@ -2244,10 +2360,52 @@ function renderSettings(root){
     i.innerHTML='<h3>'+t+'</h3><p>'+d+'</p>'; r.appendChild(i); r.appendChild(ctrl); root.appendChild(r);};
   mk('Auto-collect','Grab difficulties the moment they land, up to the limit below.',
      toggleBtn(S.set.autoCollect,()=>{S.set.autoCollect=!S.set.autoCollect;save();refresh();},['On','Off']));
-  mk('Auto-collect up to','Compares the <b>full</b> rarity, so a Gargantuan Easy is safe from it.',
-     diffSelect(S.set.autoMax,v=>{S.set.autoMax=v;save();},false));
-  mk('Collect All limit','Same limit the Collect All button uses. Also compares full rarity.',
-     diffSelect(S.set.collectAllMax,v=>{S.set.collectAllMax=v;syncCA();save();},true));
+  const rarityBox=(get,set,note)=>{
+    const wrap=el('div'); wrap.style.cssText='display:flex;align-items:center;gap:6px;flex-wrap:wrap';
+    const pre=el('span'); pre.textContent='1 in'; pre.style.cssText='font-weight:800;opacity:.8';
+    const inp=el('input'); inp.type='text'; inp.inputMode='numeric';
+    inp.value=get()===Infinity?'everything':String(get());
+    inp.style.cssText='font-family:var(--f);font-weight:800;font-size:15px;padding:6px 8px;width:120px;'
+      +'border:3px solid var(--lime-edge);border-radius:9px;background:#eaffdc;color:var(--lime-ink);text-align:right';
+    const apply=()=>{
+      const raw=inp.value.trim().toLowerCase().replace(/[, ]/g,'');
+      let v;
+      if(raw==='everything'||raw==='all'||raw==='inf') v=Infinity;
+      else {
+        const m=raw.match(/^([0-9.]+)([kmbt]?)$/);
+        if(m){ v=parseFloat(m[1])*({'':1,k:1e3,m:1e6,b:1e9,t:1e12})[m[2]]; }
+      }
+      if(v===undefined||isNaN(v)||v<1){ inp.value=get()===Infinity?'everything':String(get()); return; }
+      set(v); save();
+      inp.value=v===Infinity?'everything':String(Math.round(v));
+      if(note) note.textContent=describeCut(v);
+    };
+    inp.onchange=apply;
+    inp.onblur=apply;
+    inp.onkeydown=e=>{ e.stopPropagation(); if(e.key==='Enter') inp.blur(); };
+    wrap.appendChild(pre); wrap.appendChild(inp);
+    return wrap;
+  };
+  const describeCut=v=>{
+    if(v===Infinity) return 'Everything gets taken.';
+    let name=null;
+    for(const d of BY_RARITY) if(d.r<=v) name=d.n;
+    return name?('That is a plain '+name+' and anything below it.'):'Nothing reaches that yet.';
+  };
+  const acNote=el('div'); acNote.style.cssText='font-size:11.5px;opacity:.7;margin-top:4px';
+  acNote.textContent=describeCut(S.set.autoMax);
+  mk('Auto-collect up to','Type any number. Compares the <b>full</b> rarity, so a Gargantuan Easy is '
+     +'safe from it. You can use shorthand like 50k or 2m.',
+     rarityBox(()=>S.set.autoMax,v=>{S.set.autoMax=v;},acNote));
+  root.lastChild.querySelector('.info').appendChild(acNote);
+  mk('Collect All limit','Same idea for the Collect All button. Type <b>everything</b> for no limit.',
+     rarityBox(()=>S.set.collectAllMax,v=>{S.set.collectAllMax=v;syncCA();},null));
+  mk('Calm mode','Quietens everything down once the machine gets busy. Anything at or under '
+     +'your auto-collect number is banked without ever appearing, blocks are drawn smaller, and '
+     +'the spinning, jittering, blinking and disco effects hold still. Needs auto-collect on to '
+     +'filter spawns.',
+     toggleBtn(S.set.calm,()=>{S.set.calm=!S.set.calm;save();refresh();
+       blocks.forEach(place);},['On','Off']));
   mk('Sound','Spawn sounds, collect sound and menu clicks.',
      toggleBtn(S.set.sounds,()=>{S.set.sounds=!S.set.sounds;save();refresh();},['On','Off']));
   const vol=(label,desc,key,after)=>{
@@ -2276,7 +2434,23 @@ function renderSettings(root){
     alert_('Loaded '+n+' audio files','','#5fe7ff');
   };
   ld.onclick=()=>inp.click();
-  ldRow.appendChild(ldInfo); ldRow.appendChild(ld); ldRow.appendChild(inp); root.appendChild(ldRow);
+  const testBtn=el('button','btn alt'); testBtn.textContent='Check audio files';
+  const testOut=el('div'); testOut.style.cssText='font-size:11.5px;line-height:1.5;margin-top:6px;width:100%';
+  testBtn.onclick=()=>{
+    testBtn.textContent='Checking…';
+    testOut.innerHTML='';
+    checkAudio(res=>{
+      testBtn.textContent='Check audio files';
+      const bad=res.filter(r=>!r.ok);
+      testOut.innerHTML='<b>'+(res.length-bad.length)+' of '+res.length+' files found.</b>'
+        +'<br>Looking in: <code style="opacity:.75">'+AUDIO_DIR+'</code> next to this page.'
+        +(bad.length?'<br><span style="color:#ff9d8a">Missing: '+bad.map(r=>r.f).join(', ')
+          +'</span><br>Check the folder is called <b>audio</b> in lower case and sits beside index.html.'
+         :'<br><span style="color:#8ff04a">All present.</span>');
+    });
+  };
+  ldRow.appendChild(ldInfo); ldRow.appendChild(ld); ldRow.appendChild(testBtn);
+  ldRow.appendChild(inp); ldRow.appendChild(testOut); root.appendChild(ldRow);
   mk('Spawn sounds for 1K- difficulties','Also blip for common drops. Noisy at high drop rates.',
      toggleBtn(S.set.cheapSounds,()=>{S.set.cheapSounds=!S.set.cheapSounds;save();refresh();}));
   const alertSel=el('select');
@@ -2361,6 +2535,7 @@ $('#collectAll').onclick=collectAll;
 $('#btnShop').onclick=()=>openModal('Shop',renderShop);
 $('#btnSuper').onclick=()=>openModal('Super upgrades',renderSuper);
 $('#btnGames').onclick=()=>openModal('Minigames',renderGames);
+$('#btnStats').onclick=()=>openModal('Your numbers',renderStats);
 $('#btnIndex').onclick=()=>openModal('Difficulty index',renderIndex);
 $('#btnSet').onclick=()=>openModal('Settings',renderSettings);
 
@@ -2368,6 +2543,7 @@ $('#btnSet').onclick=()=>openModal('Settings',renderSettings);
 function snapshot(){
   return {money:S.money,up:S.up,best:S.best,seen:S.seen,total:S.totalCollected,
     gems:S.gems,sup:S.sup,mini:S.mini,track:S.track,mgAt:S.mgAt,globalId:S.globalId,
+    mergeBoard:S.mergeBoard,
     set:{...S.set,collectAllMax:S.set.collectAllMax===Infinity?-1:S.set.collectAllMax},
     field:blocks.slice(0,90).map(b=>({n:b.d.n,m:b.mods,x:b.fx,y:b.fy,t:b.target,s:b.scale}))};
 }
@@ -2378,7 +2554,7 @@ function applySave(o){
   S.money=o.money||0; Object.assign(S.up,o.up||{});
   S.gems=o.gems||0; Object.assign(S.sup,o.sup||{});
   S.mini=!!o.mini; S.miniT=Date.now(); S.track=o.track||0; S.mgAt=o.mgAt||{};
-  S.globalId=o.globalId||'';
+  S.globalId=o.globalId||''; S.mergeBoard=o.mergeBoard||null;
   S.best=o.best||null; S.seen=o.seen||{}; S.totalCollected=o.total||0;
   if(o.set){Object.assign(S.set,o.set);
     S.set.collectAllMax=o.set.collectAllMax===-1?Infinity:o.set.collectAllMax;}
@@ -2496,6 +2672,80 @@ $('#playBtn').onclick=startGame;
 $('#skip').onclick=()=>{ $('#cine').style.display='none'; showTitle(); };
 $('#helpBtn').onclick=()=>{ $('#title').classList.remove('on'); openModal('How to play',renderHelp); };
 $('#btnHelp').onclick=()=>openModal('How to play',renderHelp);
+
+/* ---------- STATS ---------- */
+function renderStats(root){
+  const tbl=(title,rows)=>{
+    const d=el('div','hsec');
+    d.innerHTML='<h3>'+title+'</h3>'
+      +'<table style="width:100%;border-collapse:collapse;font-size:13px">'
+      +rows.map(r=>'<tr'+(r[2]?' style="font-weight:800;color:#fff"':'')+'>'
+        +'<td style="padding:3px 0;opacity:'+(r[2]?1:.82)+'">'+r[0]+'</td>'
+        +'<td style="padding:3px 0;text-align:right;white-space:nowrap">'+r[1]+'</td></tr>').join('')
+      +'</table>';
+    root.appendChild(d);
+  };
+  const x=v=>'&times;'+fmt(v);
+
+  tbl('Luck',[
+    ['Dropper — '+DROPPERS[S.up.dropper].name, x(DROPPERS[S.up.dropper].luck)],
+    ['Fortune (level '+S.up.fortune+')', x(1+0.10*S.up.fortune)],
+    ['Prism core (level '+S.sup.prism+')', x(prismMult())],
+    ['Overcharge', S.sup.overload?(ocActive()?x(ocLuck())+' — running now':x(ocLuck())+' when used'):'not owned'],
+    ['<b>Total luck right now</b>', '<b>'+x(luck())+'</b>', 1]
+  ]);
+
+  tbl('Money',[
+    ['Market deal (level '+S.up.market+')', x(1+0.15*S.up.market)],
+    ['Diamond vault (level '+S.sup.vault+')', x(1+0.5*S.sup.vault)],
+    ['Golden modifier', '&times;2 on top'],
+    ['<b>Every collect is worth</b>', '<b>'+x(marketMult())+'</b>', 1]
+  ]);
+
+  tbl('Modifier luck',[
+    ['Mutation field (level '+S.up.mutation+')', x(1+0.12*S.up.mutation)],
+    ['Refinery (level '+S.sup.refinery+')', x(1+0.25*S.sup.refinery)],
+    ['<b>Total modifier luck</b>', '<b>'+x(modLuck())+'</b>', 1]
+  ]);
+
+  tbl('The machine',[
+    ['A drop every', (dropDelay()/1000).toFixed(2)+'s'],
+    ['Difficulties per drop', String(1+S.up.multi)],
+    ['Ground space', String(capacity())],
+    ['Mini dropper', S.mini?(x(miniLuck())+' luck every '+Math.round(miniWait()/1000)+'s'):'not owned'],
+    ['Diamond chance per collect', (gemChance()*100).toFixed(0)+'%'],
+    ['Announcing above', odds(S.set.alertAt)+' true']
+  ]);
+
+  if(S.best){
+    const d=BY_NAME[S.best.name];
+    const now=d?trueOdds(d,S.best.mods||[]):null;
+    tbl('Your rarest find',[
+      ['What it was', modLabel(S.best.mods||[])+S.best.name],
+      ['Listed odds', odds(S.best.rarity)],
+      ['True odds when you got it',
+        S.best.trueRarity?odds(S.best.trueRarity):'<span style="opacity:.6">found before this was tracked</span>'],
+      ['Luck you had then', S.best.luckThen?x(S.best.luckThen):'<span style="opacity:.6">unknown</span>'],
+      ['<b>True odds at your luck now</b>', '<b>'+(now?odds(now):'—')+'</b>', 1],
+      ['Worth', '$'+fmt(S.best.value)]
+    ]);
+  }
+
+  tbl('Totals',[
+    ['Money', '$'+fmt(S.money)],
+    ['Diamonds', fmt(S.gems)],
+    ['Difficulties collected', fmt(S.totalCollected)],
+    ['Kinds discovered', Object.keys(S.seen).length+' / '+DIFFS.length],
+    ['On the ground now', blocks.length+' / '+capacity()],
+    ['Minigame payout is worth', '$'+fmt(bestValue())+' per good run']
+  ]);
+
+  const note=el('div','hint');
+  note.innerHTML='True odds fold every luck source together, so they tell you how unlikely '
+    +'something really was rather than what is printed on it. The Index sandbox shows the same '
+    +'figure for any combination you tick.';
+  root.appendChild(note);
+}
 
 /* ---------- HELP ---------- */
 function renderHelp(root){

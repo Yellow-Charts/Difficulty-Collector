@@ -19,19 +19,25 @@ repository root or a `docs/` folder and enable Pages in the repository settings.
 
 ## Audio and copyright
 
-The music that ships with this is commercial: Daft Punk, Crypt of the NecroDancer,
-Rhythm Tengoku and Solkrieg. **Publishing those files in a public repository is
-copyright infringement**, and it's the kind that gets repositories taken down rather
-than the kind nobody notices.
+The `audio` folder has to be committed alongside `index.html` for sound to work on a
+hosted copy. There is deliberately no `.gitignore` excluding it, because excluding it is
+the usual reason the music goes silent after publishing.
 
-Three ways round it, roughly in order of how much hassle they are:
+Be aware of what that means though. The bundled music is commercial: Daft Punk, Crypt of
+the NecroDancer, Rhythm Tengoku and Solkrieg. Committing those files to a public
+repository is copyright infringement, and it is the kind that gets repositories taken
+down rather than the kind nobody notices.
 
-1. Add `audio/` to `.gitignore` and let players drop their own files in. Settings already
-   has a loader for exactly this, and the track list in `TRACKS` tells them what to find.
-2. Replace the tracks with something openly licensed and edit `TRACKS` to match.
-3. Keep the repository private.
+If you would rather not risk it:
 
-The sound effects are yours, so those are only a question if you didn't make them.
+- Swap the tracks for something openly licensed and edit the `TRACKS` list to match.
+- Or leave the folder out and let players load their own through Settings, accepting that
+  it will be silent for everyone else by default.
+- Or keep the repository private.
+
+The folder must be named `audio` in lower case and sit next to `index.html`. Hosting is
+case sensitive even though your own computer usually is not. **Settings has a "Check audio
+files" button** that loads every file and lists any it cannot reach.
 
 ## Global statistics
 
