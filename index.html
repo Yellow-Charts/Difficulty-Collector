@@ -1064,10 +1064,15 @@ const GKEY='difficulty-collector-global-v1';
 const GLOBAL_ID='01a07854-1d16-7c23-9604-06adb397ced7';
 
 const blobURL=()=>{
-  let id=String(S.globalId||GLOBAL_ID||'').trim();
-  /* accept a whole pasted address as well as a bare code */
-  if(id.indexOf('/')>=0) id=id.split(/[?#]/)[0].replace(/\/+$/,'').split('/').pop();
-  id=id.replace(/[^0-9a-zA-Z-]/g,'');   /* codes contain hyphens, so keep them */
+  let v=String(S.globalId||GLOBAL_ID||'').trim();
+  if(!v) return '';
+  /* a full address is used as is, so you can point this at any service later */
+  if(/^https?:\/\//i.test(v)){
+    if(/jsonblob\.com\/[0-9a-zA-Z-]+$/.test(v)&&v.indexOf('/api/')<0)
+      return 'https://jsonblob.com/api/jsonBlob/'+v.split('/').pop();
+    return v;
+  }
+  const id=v.replace(/[^0-9a-zA-Z-]/g,'');
   return id?'https://jsonblob.com/api/jsonBlob/'+id:'';
 };
 
@@ -1139,6 +1144,38 @@ const GNet={
   }
 };
 let gWarn='';
+/* Walks the whole round trip and says what happened at each step, so a failure
+   points at its own cause instead of just going quiet. */
+async function testGlobal(say){
+  const u=blobURL();
+  if(!u){ say('No code is set, so there is nothing to test.',0); return; }
+  say('Address it uses:',1);
+  say(u,2);
+  let r;
+  try{
+    r=await fetch(u,{cache:'no-store',headers:{'Accept':'application/json'}});
+  }catch(e){
+    say('Could not get a reply at all. That almost always means the service does not allow '
+      +'browsers from other sites to call it, or there is no connection. This is the one '
+      +'thing I cannot fix from the game itself.',0);
+    return;
+  }
+  if(r.status===404){ say('Reached the service, but that code does not exist on it. Make a new one.',0); return; }
+  if(!r.ok){ say('Reached the service, but it answered with error '+r.status+'.',0); return; }
+  let data;
+  try{ data=await r.json(); }
+  catch(e){ say('It replied, but not with readable data.',0); return; }
+  say('Reading works. It currently holds '+fmt(data.total||0)+' collected difficulties.',3);
+  let w;
+  try{
+    w=await fetch(u,{method:'PUT',headers:{'Content-Type':'application/json','Accept':'application/json'},
+      body:JSON.stringify(data)});
+  }catch(e){
+    say('Reading works, but saving back was blocked by the browser.',0); return;
+  }
+  if(!w.ok){ say('Reading works, but saving back was refused with error '+w.status+'.',0); return; }
+  say('Saving works too. The shared counter is fully connected.',3);
+}
 function gRecord(b){
   gPend.total++;
   gAdd(gPend.diff,b.d.n,1);
@@ -2560,8 +2597,23 @@ function renderSettings(root){
         alert_('Could not make one automatically','use the jsonblob.com steps instead','#ff5a4a');
       }
     };
-    wrap.appendChild(inp); wrap.appendChild(useBtn); wrap.appendChild(newBtn);
-    gr.appendChild(wrap);
+    const testBtn2=el('button','btn alt'); testBtn2.textContent='Test connection';
+    const tOut=el('div');
+    tOut.style.cssText='width:100%;font-size:11.5px;line-height:1.5;margin-top:7px;word-break:break-all';
+    testBtn2.onclick=()=>{
+      tOut.innerHTML=''; testBtn2.textContent='Testing…';
+      const colours={0:'#ff9d8a',1:'#c7d6e4',2:'#ffd9a8',3:'#8ff04a'};
+      testGlobal((line,kind)=>{
+        const d=el('div');
+        d.style.color=colours[kind]||'#c7d6e4';
+        if(kind===2){ d.style.cssText+=';background:rgba(0,0,0,.3);border-radius:6px;padding:3px 6px;font-size:11px'; }
+        d.textContent=line;
+        tOut.appendChild(d);
+        testBtn2.textContent='Test connection';
+      });
+    };
+    wrap.appendChild(inp); wrap.appendChild(useBtn); wrap.appendChild(newBtn); wrap.appendChild(testBtn2);
+    gr.appendChild(wrap); gr.appendChild(tOut);
   }
   root.appendChild(gr);
 

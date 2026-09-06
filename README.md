@@ -41,34 +41,57 @@ files" button** that loads every file and lists any it cannot reach.
 
 ## Global statistics
 
-The globe icons count what everyone playing has collected between them. Out of the box
-they only count for one browser. To make them shared:
+The globe icons count what everyone playing has collected between them. `GLOBAL_ID` near
+the top of the script decides where those numbers live. Leave it empty and they only count
+for one browser.
+
+### Option 1: jsonblob (no account)
 
 1. Go to **jsonblob.com**
 2. Delete everything in the box, type `{}`, press **Save**
-3. Copy the long number at the end of the address bar
-4. Open `index.html`, find `const GLOBAL_ID='';` near the top of the script, and paste the
-   number between the quotes
+3. Copy the long code at the end of the address bar
+4. Paste it between the quotes in `const GLOBAL_ID='';`
 
-That's it. Everyone loading your page now shares one counter.
+Settings has a **Test connection** button that walks the whole round trip and says exactly
+where it fails, if it does. Note that a free public store like this can be read and
+overwritten by anyone who views your page source, and jsonblob deletes entries nobody has
+touched for 75 days.
 
-You can also paste the code into Settings inside the game to test it without editing the
-file, but that only applies to you — the number has to go in `GLOBAL_ID` for everyone to
-share it. Settings also has a **Make me one** button that creates the counter for you, if
-your browser lets it read the response header.
+### Option 2: your own counter (if option 1 is blocked)
 
-Things worth knowing:
+Some free services refuse requests coming from another website, which browsers enforce as
+CORS. If the connection test says it could not get a reply at all, that is what happened,
+and no change inside the game can fix it. Running your own tiny endpoint will:
 
-- Anyone who views the page source can see the code and could overwrite or wipe the
-  numbers. Treat them as decoration, not a leaderboard worth defending.
-- jsonblob deletes counters that go 75 days without being touched. If yours stops working
-  after a long quiet spell, make a new one.
-- Players write in bursts every 30 seconds, and simultaneous saves use last-write-wins, so
-  the odd collect can go missing from the total.
-- If the counter is unreachable the game carries on and the labels go back to saying the
-  numbers are local.
+1. Make a free account at **cloudflare.com** and open **Workers & Pages**
+2. Create a Worker, then create a **KV namespace** and bind it to the Worker as `STATS`
+3. Replace the Worker code with this:
 
-Inside Claude none of this applies — `window.storage` provides a shared bucket and it is
+```js
+export default {
+  async fetch(request, env) {
+    const cors = {
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET,PUT,OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type',
+    };
+    if (request.method === 'OPTIONS') return new Response(null, { headers: cors });
+    if (request.method === 'PUT') {
+      await env.STATS.put('stats', await request.text());
+      return new Response('{"ok":true}', { headers: { ...cors, 'Content-Type': 'application/json' } });
+    }
+    const data = (await env.STATS.get('stats')) || '{}';
+    return new Response(data, { headers: { ...cors, 'Content-Type': 'application/json' } });
+  },
+};
+```
+
+4. Deploy it and copy the address it gives you
+5. Put that whole address in `GLOBAL_ID` instead of a jsonblob code
+
+`GLOBAL_ID` accepts either a jsonblob code or a full address, so nothing else changes.
+
+Inside Claude none of this applies. `window.storage` provides a shared bucket and it is
 used automatically.
 
 ## Editing the game
