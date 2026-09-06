@@ -1018,6 +1018,12 @@ function mgMerge(api){
 
 /* ---------- SAVE ---------- */
 const KEY='difficulty-collector-v2';
+
+/* Raise this by one to wipe every player's save the next time they open the page.
+   Anyone whose save carries an older number gets a clean start, which is the only
+   way to reset people you have no access to. It costs them everything they had,
+   so only raise it when a balance change makes old saves nonsense. */
+const SAVE_VERSION=2;
 const Store={
   async load(){
     try{ if(window.storage){const r=await window.storage.get(KEY,false);
@@ -2606,10 +2612,16 @@ function renderSettings(root){
                 :'Connected. The numbers are shared with everyone playing.'))
     : 'Not connected, so the globe numbers are only yours.';
   gi.innerHTML='<h3>🌐 Shared counter</h3><p>'+state+'</p>'
-    +(gMode==='shared'?'':'<p style="font-size:12px;opacity:.75">Get a free code at '
-      +'<a href="https://jsonblob.com" target="_blank" rel="noopener" style="color:#8ff04a">jsonblob.com</a>'
-      +' — clear the box, type <b>{}</b>, press Save, then copy the long number from the address bar. '
-      +'Paste it below, or into <b>GLOBAL_ID</b> at the top of index.html so everybody shares it.</p>');
+    +(gMode==='shared'?''
+      : (gMode==='blob'&&!gWriteBlocked)
+        ? '<p style="font-size:12px;opacity:.75">Everyone who opens this page shares this counter. '
+          +'Its address is kept in <b>GLOBAL_ID</b> at the top of index.html, so nobody else has to '
+          +'set anything up. The box below only changes it for this browser.</p>'
+        : '<p style="font-size:12px;opacity:.75">This needs a counter that accepts writing. Free JSON '
+          +'stores generally allow a web page to read from them but not write to them, so they will '
+          +'not do. <b>worker.js</b> and the Global statistics part of the README walk through setting '
+          +'up a free one that works. Paste its address below, or into <b>GLOBAL_ID</b> at the top of '
+          +'index.html so everybody shares it.</p>');
   gr.appendChild(gi);
   if(gMode!=='shared'){
     const wrap=el('div'); wrap.style.cssText='display:flex;gap:8px;flex-wrap:wrap;align-items:center';
@@ -2627,6 +2639,8 @@ function renderSettings(root){
       alert_(gWarn?'Could not connect':'Shared counter connected',gWarn||'',gWarn?'#ff5a4a':'#8ff04a');
     };
     const newBtn=el('button','btn alt'); newBtn.textContent='Make me one';
+    newBtn.title='Creates a free jsonblob store. Note that these can be read but not written '
+      +'to from a web page, so it will only get you halfway.';
     newBtn.onclick=async()=>{
       newBtn.textContent='Making…';
       try{
@@ -2705,7 +2719,7 @@ $('#btnSet').onclick=()=>openModal('Settings',renderSettings);
 
 /* ---------- SAVE ---------- */
 function snapshot(){
-  return {money:S.money,up:S.up,best:S.best,seen:S.seen,total:S.totalCollected,
+  return {v:SAVE_VERSION,money:S.money,up:S.up,best:S.best,seen:S.seen,total:S.totalCollected,
     gems:S.gems,sup:S.sup,mini:S.mini,track:S.track,mgAt:S.mgAt,globalId:S.globalId,
     mergeBoard:S.mergeBoard,
     set:{...S.set,collectAllMax:S.set.collectAllMax===Infinity?-1:S.set.collectAllMax},
@@ -2715,6 +2729,12 @@ let saveT=null;
 function save(){ clearTimeout(saveT); saveT=setTimeout(()=>Store.save(snapshot()),400); }
 function applySave(o){
   if(!o) return;
+  if((o.v||1)!==SAVE_VERSION){
+    /* save is from before the last reset, so it is thrown away rather than loaded */
+    Store.wipe();
+    setTimeout(()=>alert_('Fresh start','the game was rebalanced, so everyone begins again','#8ff04a'),1200);
+    return;
+  }
   S.money=o.money||0; Object.assign(S.up,o.up||{});
   S.gems=o.gems||0; Object.assign(S.sup,o.sup||{});
   S.mini=!!o.mini; S.miniT=Date.now(); S.track=o.track||0; S.mgAt=o.mgAt||{};
